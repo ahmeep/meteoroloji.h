@@ -2,5 +2,5 @@
 
 rm -rf build/
 mkdir build/
-gcc -o build/demo demo.c cJSON.c -I. -ansi -Wall -Wextra -pedantic-errors -lcurl
+gcc -o build/demo demo.c cJSON.c -I. -ansi -Wall -Wextra -pedantic-errors -ggdb -lcurl
 ./build/demo

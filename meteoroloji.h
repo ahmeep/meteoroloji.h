@@ -47,6 +47,38 @@ typedef enum {
     MTRLJ_JSON_PARSING_FAILED
 } MTRLJ_CODE;
 
+/* I am not so sure about translations but should be OK. */
+typedef enum {
+    MTRLJ_WEATHER_INVALID = 0,
+    MTRLJ_WEATHER_CLEAR = 0x00410000,
+    MTRLJ_WEATHER_SOME_CLOUDS = 0x00414200,
+    MTRLJ_WEATHER_PARTLY_CLOUDY = 0x00504200,
+    MTRLJ_WEATHER_MOSTLY_CLOUDY = 0x00434200,
+    MTRLJ_WEATHER_LIGHT_RAINY = 0x00485900,
+    MTRLJ_WEATHER_RAINY = 0x00590000,
+    MTRLJ_WEATHER_HEAVY_RAINY = 0x004b5900,
+    MTRLJ_WEATHER_SLEETY = 0x004b4b59,
+    MTRLJ_WEATHER_LIGHT_SNOWY = 0x00484b59,
+    MTRLJ_WEATHER_SNOWY = 0x004b0000,
+    MTRLJ_WEATHER_HEAVY_SNOWY = 0x004b594b, /* also 0x00594b59 */
+    MTRLJ_WEATHER_LIGHT_DOWNPOURS = 0x00485359,
+    MTRLJ_WEATHER_DOWNPOURS = 0x00535900,
+    MTRLJ_WEATHER_HEAVY_DOWNPOURS = 0x004b5359,
+    MTRLJ_WEATHER_ISOLATED_DOWNPOURS = 0x004d5359,
+    MTRLJ_WEATHER_HAIL = 0x00445900,
+    MTRLJ_WEATHER_THUNDERY_SHOWERS = 0x00475359,
+    MTRLJ_WEATHER_HEAVY_THUNDERY_SHOWERS = 0x004b4759,
+    MTRLJ_WEATHER_FOGGY = 0x00534943,
+    MTRLJ_WEATHER_HAZY = 0x00505553,
+    MTRLJ_WEATHER_SMOGGY = 0x00444e4d,
+    MTRLJ_WEATHER_DUST_STORM = 0x004b4600,
+    MTRLJ_WEATHER_WINDY = 0x00520000,
+    MTRLJ_WEATHER_STRONG_SOUTHERLY_WIND = 0x00474b52,
+    MTRLJ_WEATHER_STRONG_NORTHERLY_WIND = 0x004b4b52,
+    MTRLJ_WEATHER_WARM = 0x0053434b,
+    MTRLJ_WEATHER_COLD = 0x0053474b
+} MTRLJ_WEATHER_CONDITION;
+
 struct mtrlj_district {
     int id;
     int height;
@@ -55,6 +87,44 @@ struct mtrlj_district {
 
     char *city_name;
     int city_plate_code; /* between 1 and 81 */
+};
+
+/* If value of a variable is -99 or -9999 it means it is not available. */
+struct mtrlj_situation {
+    /* Condition of weather, probably you are looking for this. */
+    MTRLJ_WEATHER_CONDITION condition;
+
+    /* Pressure information, unit is hectopascal. */
+    double actual_pressure, reduced_pressure_at_sea;
+
+    /* Temperature of sea, unavailable on shoreless cities. unit is celcius. */
+    double sea_temperature;
+
+    /* Height of snow, unit is meters. */
+    double snow_height;
+
+    /* Relative humidity, percentage. */
+    double humidity_percent;
+
+    /* Speed of wind, unit is kmh. */
+    double wind_speed;
+
+    /* Direction of wind, unit is degrees (0-360).*/
+    double wind_direction;
+
+    /* How foul the sky is, percentage. */
+    double cloudiness_percent;
+
+    /* Temperature, unit is celcius. */
+    double temperature;
+
+    /* Rainfall, unit is millimeters. */
+    double rainfall, rainfall_10_mins, rainfall_1_hour, rainfall_6_hours,
+        rainfall_12_hours, rainfall_24_hours;
+
+    /* Time of this data in ISO 8601 format. Parsing this is up to user. If you
+       want an example look at `demo/demo.c`. */
+    char *time;
 };
 
 /* Functions for getting information about city and districts, also you need
@@ -66,16 +136,19 @@ MTRLJ_CODE mtrlj_get_districts_in_city(struct mtrlj_district **districts,
                                        size_t *size, const char *city_name);
 
 /* Functions for getting information about weather in a specific district. */
-/* TODO: MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district, ); */
+MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
+                                  struct mtrlj_situation *situation);
 
 /* Be responsible and free your memory! */
 void mtrlj_free_district(struct mtrlj_district district);
 void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size);
+void mtrlj_free_situation(struct mtrlj_situation situation);
 
 #endif
 
 #ifdef METEOROLOJI_IMPL
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,6 +279,33 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
     district->city_plate_code = city_plate_code->valueint;
 
     return MTRLJ_OK;
+}
+
+/* Condition from 1-3 letter codes */
+MTRLJ_WEATHER_CONDITION mtrlj_condition_from_code(const char *code)
+{
+    /* i am just using bitwise operations to encode characters to shorten this
+       function */
+    size_t len;
+    uint32_t condition = 0;
+
+    len = strlen(code);
+    if (len < 1 || len > 3)
+        return MTRLJ_WEATHER_INVALID;
+
+    condition |= code[0] << 16; /* 0x00XX0000 */
+
+    if (len > 1)
+        condition |= code[1] << 8; /* 0x00xxXX00 */
+
+    if (len > 2)
+        condition |= code[2]; /* 0x00xxxxXX */
+
+    /* This condition has 2 codes(`KYK` and `YKY`) */
+    if (condition == 0x00594b59)
+        return MTRLJ_WEATHER_HEAVY_SNOWY;
+
+    return (MTRLJ_WEATHER_CONDITION)condition;
 }
 
 /* Exposed functions */
@@ -342,6 +442,104 @@ end:
     return return_code;
 }
 
+MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
+                                  struct mtrlj_situation *situation)
+{
+    const char *LATEST_SITUATION_ENDPOINT =
+        "https://servis.mgm.gov.tr/web/sondurumlar";
+    char *url_parameter;
+    MTRLJ_CODE return_code = MTRLJ_OK;
+    struct mtrlj_curl_response mcp = {0};
+    cJSON *situation_json = NULL;
+
+    url_parameter = calloc(128, sizeof(char));
+    sprintf(url_parameter, "merkezid=%d", district.id);
+
+    if (!mtrlj_curl_get_params(LATEST_SITUATION_ENDPOINT,
+                               (const char **)&url_parameter, 1, &mcp)) {
+        return_code = MTRLJ_REQUEST_FAILED;
+        goto end;
+    }
+
+    situation_json = cJSON_Parse(mcp.response);
+    if (situation_json == NULL || !cJSON_IsArray(situation_json)
+        || cJSON_GetArraySize(situation_json) != 1) {
+        return_code = MTRLJ_JSON_PARSING_FAILED;
+        goto end;
+    }
+
+    {
+        size_t time_size;
+        cJSON *json = cJSON_GetArrayItem(situation_json, 0);
+        cJSON *actual_pressure = cJSON_GetObjectItem(json, "aktuelBasinc");
+        cJSON *reduced_pressure_at_sea =
+            cJSON_GetObjectItem(json, "denizeIndirgenmisBasinc");
+        cJSON *sea_temperature = cJSON_GetObjectItem(json, "denizSicaklik");
+        cJSON *condition_code = cJSON_GetObjectItem(json, "hadiseKodu");
+        cJSON *cloudiness_percent = cJSON_GetObjectItem(json, "kapalilik");
+        cJSON *snow_height = cJSON_GetObjectItem(json, "karYukseklik");
+        cJSON *humidity_percent = cJSON_GetObjectItem(json, "nem");
+        cJSON *wind_speed = cJSON_GetObjectItem(json, "ruzgarHiz");
+        cJSON *wind_direction = cJSON_GetObjectItem(json, "ruzgarYon");
+        cJSON *temperature = cJSON_GetObjectItem(json, "sicaklik");
+        cJSON *rainfall = cJSON_GetObjectItem(json, "yagis00Now");
+        cJSON *rainfall_10_mins = cJSON_GetObjectItem(json, "yagis10Dk");
+        cJSON *rainfall_1_hour = cJSON_GetObjectItem(json, "yagis1Saat");
+        cJSON *rainfall_6_hours = cJSON_GetObjectItem(json, "yagis6Saat");
+        cJSON *rainfall_12_hours = cJSON_GetObjectItem(json, "yagis12Saat");
+        cJSON *rainfall_24_hours = cJSON_GetObjectItem(json, "yagis24Saat");
+        cJSON *time = cJSON_GetObjectItem(json, "veriZamani");
+
+        /* this is a huge if statement lol */
+        if (!cJSON_IsNumber(actual_pressure)
+            || !cJSON_IsNumber(reduced_pressure_at_sea)
+            || !cJSON_IsNumber(sea_temperature)
+            || !cJSON_IsNumber(cloudiness_percent)
+            || !cJSON_IsNumber(snow_height) || !cJSON_IsNumber(humidity_percent)
+            || !cJSON_IsNumber(wind_speed) || !cJSON_IsNumber(wind_direction)
+            || !cJSON_IsNumber(temperature) || !cJSON_IsNumber(rainfall)
+            || !cJSON_IsNumber(rainfall_10_mins)
+            || !cJSON_IsNumber(rainfall_1_hour)
+            || !cJSON_IsNumber(rainfall_6_hours)
+            || !cJSON_IsNumber(rainfall_12_hours)
+            || !cJSON_IsNumber(rainfall_24_hours) || !cJSON_IsString(time)
+            || (time->valuestring == NULL) || !cJSON_IsString(condition_code)
+            || (condition_code->valuestring == NULL)) {
+            return_code = MTRLJ_JSON_PARSING_FAILED;
+            goto end;
+        }
+
+        situation->actual_pressure = actual_pressure->valuedouble;
+        situation->reduced_pressure_at_sea =
+            reduced_pressure_at_sea->valuedouble;
+        situation->sea_temperature = sea_temperature->valuedouble;
+        situation->condition =
+            mtrlj_condition_from_code(condition_code->valuestring);
+        situation->cloudiness_percent = cloudiness_percent->valuedouble;
+        situation->snow_height = snow_height->valuedouble;
+        situation->humidity_percent = humidity_percent->valuedouble;
+        situation->wind_speed = wind_speed->valuedouble;
+        situation->wind_direction = wind_direction->valuedouble;
+        situation->temperature = temperature->valuedouble;
+        situation->rainfall = rainfall->valuedouble;
+        situation->rainfall_10_mins = rainfall_10_mins->valuedouble;
+        situation->rainfall_1_hour = rainfall_1_hour->valuedouble;
+        situation->rainfall_6_hours = rainfall_6_hours->valuedouble;
+        situation->rainfall_12_hours = rainfall_12_hours->valuedouble;
+        situation->rainfall_24_hours = rainfall_24_hours->valuedouble;
+
+        time_size = (strlen(time->valuestring) + 1) * sizeof(char);
+        situation->time = malloc(time_size);
+        memcpy(situation->time, time->valuestring, time_size);
+    }
+
+end:
+    free(url_parameter);
+    cJSON_Delete(situation_json);
+    free(mcp.response);
+    return return_code;
+}
+
 void mtrlj_free_district(struct mtrlj_district district)
 {
     free(district.name);
@@ -355,5 +553,10 @@ void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size)
         mtrlj_free_district(pdistrict[i]);
     }
     free(pdistrict);
+}
+
+void mtrlj_free_situation(struct mtrlj_situation situation)
+{
+    free(situation.time);
 }
 #endif
