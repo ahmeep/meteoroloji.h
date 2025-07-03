@@ -1,3 +1,5 @@
+/* meteoroloji.h -- v0.1.0 -- Weather forecast for Türkiye */
+
 /* Copyright (c) 2025 Ahmet Aygör.
 
 Redistribution and use in source and binary forms, with or without modification,
