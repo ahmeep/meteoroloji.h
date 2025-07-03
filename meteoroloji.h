@@ -1,4 +1,4 @@
-/* meteoroloji.h -- v0.1.0 -- Weather forecast for Türkiye */
+/* meteoroloji.h -- v0.2.0 -- Weather forecast for Türkiye */
 
 /* Copyright (c) 2025 Ahmet Aygör.
 
@@ -81,6 +81,16 @@ typedef enum {
     MTRLJ_WEATHER_COLD = 0x0053474b
 } MTRLJ_WEATHER_CONDITION;
 
+/* In Türkiye Time(UTC+3) */
+struct mtrlj_time {
+    int second;
+    int minute;
+    int hour;
+    int day;
+    int month;
+    int year;
+};
+
 struct mtrlj_district {
     int id;
     int height;
@@ -126,9 +136,7 @@ struct mtrlj_situation {
     double rainfall, rainfall_10_mins, rainfall_1_hour, rainfall_6_hours,
         rainfall_12_hours, rainfall_24_hours;
 
-    /* Time of this data in ISO 8601 format. Parsing this is up to user. If you
-       want an example look at `demo/demo.c`. */
-    char *time;
+    struct mtrlj_time time;
 };
 
 /* Daily forecast information */
@@ -144,7 +152,7 @@ struct mtrlj_daily_forecast {
     double past_peak_temperature_max;
     double past_average_temperature_min;
     double past_average_temperature_max;
-    char *time;
+    struct mtrlj_time time;
 };
 
 /* Functions for getting information about city and districts, also you need
@@ -164,7 +172,6 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
 /* Be responsible and free your memory! */
 void mtrlj_free_district(struct mtrlj_district district);
 void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size);
-void mtrlj_free_situation(struct mtrlj_situation situation);
 void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast);
 
 #endif
@@ -339,6 +346,43 @@ MTRLJ_WEATHER_CONDITION mtrlj_condition_from_code(const char *code)
     return (MTRLJ_WEATHER_CONDITION)condition;
 }
 
+/* Parsing time */
+struct mtrlj_time mtrlj_parse_iso8601_time(const char *str)
+{
+    char *temp;
+    char *after_t;
+    char *part;
+    struct mtrlj_time time;
+
+    temp = calloc(strlen(str) + 1, sizeof(char));
+    strcpy(temp, str);
+
+    after_t = strchr(temp, 'T') + 1;
+
+    part = strtok(temp, "-");
+    time.year = atoi(part);
+
+    part = strtok(NULL, "-");
+    time.month = atoi(part);
+
+    part = strtok(NULL, "-");
+    time.day = atoi(part);
+
+    part = strtok(after_t, ":");
+    time.hour = atoi(part); /* Türkiye time. */
+
+    part = strtok(NULL, ":");
+    time.minute = atoi(part);
+
+    part = strtok(NULL, ":");
+    part = strtok(part, ".");
+    time.second = atoi(part);
+
+    free(temp);
+
+    return time;
+}
+
 /* Exposed functions */
 
 MTRLJ_CODE mtrlj_get_cities(struct mtrlj_district **cities, size_t *size)
@@ -500,7 +544,6 @@ MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
     }
 
     {
-        size_t time_size;
         cJSON *json = cJSON_GetArrayItem(situation_json, 0);
         cJSON *actual_pressure = cJSON_GetObjectItem(json, "aktuelBasinc");
         cJSON *reduced_pressure_at_sea =
@@ -558,10 +601,10 @@ MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
         situation->rainfall_6_hours = rainfall_6_hours->valuedouble;
         situation->rainfall_12_hours = rainfall_12_hours->valuedouble;
         situation->rainfall_24_hours = rainfall_24_hours->valuedouble;
+        situation->time = mtrlj_parse_iso8601_time(time->valuestring);
 
-        time_size = (strlen(time->valuestring) + 1) * sizeof(char);
-        situation->time = malloc(time_size);
-        memcpy(situation->time, time->valuestring, time_size);
+        /* looks like mgm returns UTC time here? */
+        situation->time.hour += 3;
     }
 
 end:
@@ -617,7 +660,6 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
         cJSON *wind_speed;
         cJSON *wind_direction;
         cJSON *time;
-        size_t time_size;
         cJSON *json = cJSON_GetArrayItem(daily_json, 0);
 
         for (i = 0; i < 5; i++) {
@@ -660,10 +702,7 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
             (*forecasts)[i].humidity_max = humidity_max->valuedouble;
             (*forecasts)[i].wind_speed = wind_speed->valuedouble;
             (*forecasts)[i].wind_direction = wind_direction->valuedouble;
-
-            time_size = (strlen(time->valuestring) + 1) * sizeof(char);
-            (*forecasts)[i].time = malloc(time_size);
-            memcpy((*forecasts)[i].time, time->valuestring, time_size);
+            (*forecasts)[i].time = mtrlj_parse_iso8601_time(time->valuestring);
         }
     }
 
@@ -691,18 +730,8 @@ void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size)
     free(pdistrict);
 }
 
-void mtrlj_free_situation(struct mtrlj_situation situation)
-{
-    free(situation.time);
-}
-
 void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast)
 {
-    size_t i;
-    /* This is always 5 */
-    for (i = 0; i < 5; i++) {
-        free(pforecast[i].time);
-    }
     free(pforecast);
 }
 #endif

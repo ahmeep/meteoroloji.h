@@ -40,25 +40,26 @@ const char *direction_text(double degrees)
     return "";
 }
 
-/* this will modify the str because of strtok!!! */
-struct tm parse_time(char *str)
+struct tm mtrlj_to_tm(struct mtrlj_time time)
 {
-    struct tm time = {0};
-    char *after_t = strchr(str, 'T') + 1;
-    char *part = strtok(str, "-");
-    time.tm_year = atoi(part) - 1900;
-    part = strtok(NULL, "-");
-    time.tm_mon = atoi(part) - 1;
-    part = strtok(NULL, "-");
-    time.tm_mday = atoi(part);
-    part = strtok(after_t, ":");
-    time.tm_hour = atoi(part) + 3; /* convert to Türkiye time */
-    part = strtok(NULL, ":");
-    time.tm_min = atoi(part);
-    part = strtok(NULL, ":");
-    part = strtok(part, ".");
-    time.tm_sec = atoi(part);
-    return time;
+    struct tm tm = {0};
+    tm.tm_year = time.year - 1900;
+    tm.tm_mon = time.month - 1;
+    tm.tm_mday = time.day;
+    tm.tm_hour = time.hour;
+    tm.tm_min = time.minute;
+    tm.tm_sec = time.second;
+    return tm;
+}
+
+void print_time(struct mtrlj_time time)
+{
+    static char time_str[128];
+    struct tm tm;
+
+    tm = mtrlj_to_tm(time);
+    strftime(time_str, 128, "%X %x", &tm);
+    printf("Time: %s\n", time_str);
 }
 
 int main(int argc, char **argv)
@@ -69,6 +70,8 @@ int main(int argc, char **argv)
     struct mtrlj_situation situation;
     struct mtrlj_daily_forecast *forecasts;
     size_t i;
+
+    setlocale(LC_TIME, ""); /* for strftime */
 
     if (argc > 1) {
         city_name = argv[1];
@@ -92,15 +95,7 @@ int main(int argc, char **argv)
 
     printf("City: %s\n", district.city_name);
     printf("District: %s\n", district.name);
-    {
-        char time_str[128];
-        struct tm time;
-
-        setlocale(LC_TIME, "");
-        time = parse_time(situation.time);
-        strftime(time_str, 128, "%X %x", &time);
-        printf("Time: %s\n", time_str);
-    }
+    print_time(situation.time);
 
     if (value_available(situation.temperature))
         printf("Temperature: %.2f°C\n", situation.temperature);
@@ -138,11 +133,10 @@ int main(int argc, char **argv)
     }
 
     for (i = 0; i < 5; i++) {
-        printf("%s\n", forecasts[i].time);
+        print_time(forecasts[i].time);
     }
 
     mtrlj_free_district(district);
-    mtrlj_free_situation(situation);
     mtrlj_free_forecasts(forecasts);
     return 0;
 }
