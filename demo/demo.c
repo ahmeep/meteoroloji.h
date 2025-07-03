@@ -67,6 +67,8 @@ int main(int argc, char **argv)
     char *district_name = "";
     struct mtrlj_district district;
     struct mtrlj_situation situation;
+    struct mtrlj_daily_forecast *forecasts;
+    size_t i;
 
     if (argc > 1) {
         city_name = argv[1];
@@ -128,6 +130,16 @@ int main(int argc, char **argv)
 
     if (value_available(situation.snow_height))
         printf("Snow Height: %d m\n", (int)situation.snow_height);
+
+    if (mtrlj_five_days_forecast(district, &forecasts) != MTRLJ_OK) {
+        fprintf(stderr, "Could not get 5 days forecast for %s-%s\n",
+                district.city_name, district.name);
+        return 1;
+    }
+
+    for (i = 0; i < 5; i++) {
+        printf("%s\n", forecasts[i].time);
+    }
 
     mtrlj_free_district(district);
     mtrlj_free_situation(situation);

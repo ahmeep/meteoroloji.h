@@ -82,6 +82,8 @@ typedef enum {
 struct mtrlj_district {
     int id;
     int height;
+    int daily_forecast_station;
+    int hourly_forecast_station;
     double longitude, latitude;
     char *name;
 
@@ -127,6 +129,22 @@ struct mtrlj_situation {
     char *time;
 };
 
+/* Daily forecast information */
+struct mtrlj_daily_forecast {
+    MTRLJ_WEATHER_CONDITION condition;
+    double temperature_min;
+    double temperature_max;
+    double humidity_min;
+    double humidity_max;
+    double wind_speed;
+    double wind_direction;
+    double past_peak_temperature_min;
+    double past_peak_temperature_max;
+    double past_average_temperature_min;
+    double past_average_temperature_max;
+    char *time;
+};
+
 /* Functions for getting information about city and districts, also you need
    these for getting the actual weather information. */
 MTRLJ_CODE mtrlj_get_cities(struct mtrlj_district **cities, size_t *size);
@@ -138,11 +156,14 @@ MTRLJ_CODE mtrlj_get_districts_in_city(struct mtrlj_district **districts,
 /* Functions for getting information about weather in a specific district. */
 MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
                                   struct mtrlj_situation *situation);
+MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
+                                    struct mtrlj_daily_forecast **forecasts);
 
 /* Be responsible and free your memory! */
 void mtrlj_free_district(struct mtrlj_district district);
 void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size);
 void mtrlj_free_situation(struct mtrlj_situation situation);
+void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast);
 
 #endif
 
@@ -249,6 +270,10 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
 
     cJSON *id = cJSON_GetObjectItem(district_json, "merkezId");
     cJSON *height = cJSON_GetObjectItem(district_json, "yukseklik");
+    cJSON *daily_forecast_station =
+        cJSON_GetObjectItem(district_json, "gunlukTahminIstNo");
+    cJSON *hourly_forecast_station =
+        cJSON_GetObjectItem(district_json, "saatlikTahminIstNo");
     cJSON *longitude = cJSON_GetObjectItem(district_json, "boylam");
     cJSON *latitude = cJSON_GetObjectItem(district_json, "enlem");
     cJSON *name = cJSON_GetObjectItem(district_json, "ilce");
@@ -256,6 +281,8 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
     cJSON *city_plate_code = cJSON_GetObjectItem(district_json, "ilPlaka");
 
     if (!cJSON_IsNumber(id) || !cJSON_IsNumber(height)
+        || !cJSON_IsNumber(daily_forecast_station)
+        || !cJSON_IsNumber(hourly_forecast_station)
         || !cJSON_IsNumber(longitude) || !cJSON_IsNumber(latitude)
         || !cJSON_IsNumber(city_plate_code) || !cJSON_IsString(name)
         || !cJSON_IsString(city_name) || (name->valuestring == NULL)
@@ -265,6 +292,8 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
 
     district->id = id->valueint;
     district->height = height->valueint;
+    district->daily_forecast_station = daily_forecast_station->valueint;
+    district->hourly_forecast_station = hourly_forecast_station->valueint;
     district->longitude = longitude->valuedouble;
     district->latitude = latitude->valuedouble;
 
@@ -540,6 +569,111 @@ end:
     return return_code;
 }
 
+MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
+                                    struct mtrlj_daily_forecast **forecasts)
+{
+    const char *DAILY_FORECAST_ENDPOINT =
+        "https://servis.mgm.gov.tr/web/tahminler/gunluk";
+    char *url_parameter;
+    MTRLJ_CODE return_code = MTRLJ_OK;
+    struct mtrlj_curl_response mcp = {0};
+    cJSON *daily_json = NULL;
+
+    url_parameter = calloc(128, sizeof(char));
+    sprintf(url_parameter, "istno=%d", district.daily_forecast_station);
+
+    if (!mtrlj_curl_get_params(DAILY_FORECAST_ENDPOINT,
+                               (const char **)&url_parameter, 1, &mcp)) {
+        return_code = MTRLJ_REQUEST_FAILED;
+        goto end;
+    }
+
+    daily_json = cJSON_Parse(mcp.response);
+    if (daily_json == NULL || !cJSON_IsArray(daily_json)
+        || cJSON_GetArraySize(daily_json) != 1) {
+        return_code = MTRLJ_JSON_PARSING_FAILED;
+        goto end;
+    }
+
+    *forecasts = calloc(5, sizeof(struct mtrlj_daily_forecast));
+
+    {
+        char condition_key[] = "hadiseGun ";
+        char min_temp_key[] = "enDusukGun ";
+        char max_temp_key[] = "enYuksekGun ";
+        char min_humidity_key[] = "enDusukNemGun ";
+        char max_humidity_key[] = "enYuksekNemGun ";
+        char wind_speed_key[] = "ruzgarHizGun ";
+        char wind_direction_key[] = "ruzgarYonGun ";
+        char time_key[] = "tarihGun ";
+        size_t i;
+        cJSON *condition_code;
+        cJSON *temperature_min;
+        cJSON *temperature_max;
+        cJSON *humidity_min;
+        cJSON *humidity_max;
+        cJSON *wind_speed;
+        cJSON *wind_direction;
+        cJSON *time;
+        size_t time_size;
+        cJSON *json = cJSON_GetArrayItem(daily_json, 0);
+
+        for (i = 0; i < 5; i++) {
+            char num = '1' + i;
+            condition_key[9] = num;
+            min_temp_key[10] = num;
+            max_temp_key[11] = num;
+            min_humidity_key[13] = num;
+            max_humidity_key[14] = num;
+            wind_speed_key[12] = num;
+            wind_direction_key[12] = num;
+            time_key[8] = num;
+
+            condition_code = cJSON_GetObjectItem(json, condition_key);
+            temperature_min = cJSON_GetObjectItem(json, min_temp_key);
+            temperature_max = cJSON_GetObjectItem(json, max_temp_key);
+            humidity_min = cJSON_GetObjectItem(json, min_humidity_key);
+            humidity_max = cJSON_GetObjectItem(json, max_humidity_key);
+            wind_speed = cJSON_GetObjectItem(json, wind_speed_key);
+            wind_direction = cJSON_GetObjectItem(json, wind_direction_key);
+            time = cJSON_GetObjectItem(json, time_key);
+
+            if (!cJSON_IsNumber(temperature_min)
+                || !cJSON_IsNumber(temperature_max)
+                || !cJSON_IsNumber(humidity_min)
+                || !cJSON_IsNumber(humidity_max) || !cJSON_IsNumber(wind_speed)
+                || !cJSON_IsNumber(wind_direction)
+                || !cJSON_IsString(condition_code)
+                || (condition_code->valuestring == NULL)
+                || !cJSON_IsString(time) || (time->valuestring == NULL)) {
+                return_code = MTRLJ_JSON_PARSING_FAILED;
+                goto end;
+            }
+
+            (*forecasts)[i].condition =
+                mtrlj_condition_from_code(condition_code->valuestring);
+            (*forecasts)[i].temperature_min = temperature_min->valuedouble;
+            (*forecasts)[i].temperature_max = temperature_max->valuedouble;
+            (*forecasts)[i].humidity_min = humidity_min->valuedouble;
+            (*forecasts)[i].humidity_max = humidity_max->valuedouble;
+            (*forecasts)[i].wind_speed = wind_speed->valuedouble;
+            (*forecasts)[i].wind_direction = wind_direction->valuedouble;
+
+            time_size = (strlen(time->valuestring) + 1) * sizeof(char);
+            (*forecasts)[i].time = malloc(time_size);
+            memcpy((*forecasts)[i].time, time->valuestring, time_size);
+        }
+    }
+
+    /* TODO: Add past min maxs */
+
+end:
+    free(url_parameter);
+    cJSON_Delete(daily_json);
+    free(mcp.response);
+    return return_code;
+}
+
 void mtrlj_free_district(struct mtrlj_district district)
 {
     free(district.name);
@@ -558,5 +692,14 @@ void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size)
 void mtrlj_free_situation(struct mtrlj_situation situation)
 {
     free(situation.time);
+}
+
+void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast)
+{
+    size_t i;
+    /* This is always 5 */
+    for (i = 0; i < 5; i++) {
+        free(pforecast[i].time);
+    }
 }
 #endif
