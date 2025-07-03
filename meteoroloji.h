@@ -703,5 +703,6 @@ void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast)
     for (i = 0; i < 5; i++) {
         free(pforecast[i].time);
     }
+    free(pforecast);
 }
 #endif

@@ -143,5 +143,6 @@ int main(int argc, char **argv)
 
     mtrlj_free_district(district);
     mtrlj_free_situation(situation);
+    mtrlj_free_forecasts(forecasts);
     return 0;
 }
