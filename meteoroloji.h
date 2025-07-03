@@ -383,6 +383,72 @@ struct mtrlj_time mtrlj_parse_iso8601_time(const char *str)
     return time;
 }
 
+/* Getting past min and max values for a daily forecast */
+MTRLJ_CODE mtrlj_get_past_values(int id, struct mtrlj_daily_forecast *forecast)
+{
+    const char *PAST_VALUES_ENDPOINT =
+        "https://servis.mgm.gov.tr/web/ucdegerler";
+    char *url_parameters[3];
+    MTRLJ_CODE return_code = MTRLJ_OK;
+    struct mtrlj_curl_response mcp = {0};
+    cJSON *past_json = NULL;
+
+    url_parameters[0] = calloc(128, sizeof(char));
+    url_parameters[1] = calloc(128, sizeof(char));
+    url_parameters[2] = calloc(128, sizeof(char));
+    sprintf(url_parameters[0], "merkezid=%d", id);
+    sprintf(url_parameters[1], "ay=%d", forecast->time.month);
+    sprintf(url_parameters[2], "gun=%d", forecast->time.day);
+
+    if (!mtrlj_curl_get_params(PAST_VALUES_ENDPOINT,
+                               (const char **)url_parameters, 3, &mcp)) {
+        return_code = MTRLJ_REQUEST_FAILED;
+        goto end;
+    }
+
+    past_json = cJSON_Parse(mcp.response);
+    if (past_json == NULL || !cJSON_IsArray(past_json)
+        || cJSON_GetArraySize(past_json) != 1) {
+        return_code = MTRLJ_JSON_PARSING_FAILED;
+        goto end;
+    }
+
+    {
+        cJSON *json = cJSON_GetArrayItem(past_json, 0);
+        cJSON *past_peak_temperature_min = cJSON_GetObjectItem(json, "min");
+        cJSON *past_peak_temperature_max = cJSON_GetObjectItem(json, "max");
+        cJSON *past_average_temperature_min =
+            cJSON_GetObjectItem(json, "minOrt");
+        cJSON *past_average_temperature_max =
+            cJSON_GetObjectItem(json, "maxOrt");
+
+        if (!cJSON_IsNumber(past_peak_temperature_min)
+            || !cJSON_IsNumber(past_peak_temperature_max)
+            || !cJSON_IsNumber(past_average_temperature_min)
+            || !cJSON_IsNumber(past_average_temperature_max)) {
+            return_code = MTRLJ_JSON_PARSING_FAILED;
+            goto end;
+        }
+
+        forecast->past_peak_temperature_min =
+            past_peak_temperature_min->valuedouble;
+        forecast->past_peak_temperature_max =
+            past_peak_temperature_max->valuedouble;
+        forecast->past_average_temperature_min =
+            past_average_temperature_min->valuedouble;
+        forecast->past_average_temperature_max =
+            past_average_temperature_max->valuedouble;
+    }
+
+end:
+    free(url_parameters[0]);
+    free(url_parameters[1]);
+    free(url_parameters[2]);
+    cJSON_Delete(past_json);
+    free(mcp.response);
+    return return_code;
+}
+
 /* Exposed functions */
 
 MTRLJ_CODE mtrlj_get_cities(struct mtrlj_district **cities, size_t *size)
@@ -623,6 +689,7 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
     MTRLJ_CODE return_code = MTRLJ_OK;
     struct mtrlj_curl_response mcp = {0};
     cJSON *daily_json = NULL;
+    size_t i;
 
     url_parameter = calloc(128, sizeof(char));
     sprintf(url_parameter, "istno=%d", district.daily_forecast_station);
@@ -651,7 +718,6 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
         char wind_speed_key[] = "ruzgarHizGun ";
         char wind_direction_key[] = "ruzgarYonGun ";
         char time_key[] = "tarihGun ";
-        size_t i;
         cJSON *condition_code;
         cJSON *temperature_min;
         cJSON *temperature_max;
@@ -706,7 +772,13 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
         }
     }
 
-    /* TODO: Add past min maxs */
+    for (i = 0; i < 5; i++) {
+        MTRLJ_CODE res = mtrlj_get_past_values(district.id, *forecasts + i);
+        if (res != MTRLJ_OK) {
+            return_code = res;
+            goto end;
+        }
+    }
 
 end:
     free(url_parameter);

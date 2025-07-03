@@ -134,6 +134,10 @@ int main(int argc, char **argv)
 
     for (i = 0; i < 5; i++) {
         print_time(forecasts[i].time);
+        printf("%.2f %.2f %.2f %.2f\n", forecasts[i].past_peak_temperature_min,
+               forecasts[i].past_peak_temperature_max,
+               forecasts[i].past_average_temperature_min,
+               forecasts[i].past_average_temperature_max);
     }
 
     mtrlj_free_district(district);
