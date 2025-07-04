@@ -1,4 +1,4 @@
-/* meteoroloji.h -- v0.4.0 -- Weather forecast for Türkiye */
+/* meteoroloji.h -- v0.5.0 -- Weather forecast for Türkiye */
 
 /* Copyright (c) 2025 Ahmet Aygör.
 
@@ -791,8 +791,12 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
     for (i = 0; i < 5; i++) {
         MTRLJ_CODE res = mtrlj_get_past_values(district.id, *forecasts + i);
         if (res != MTRLJ_OK) {
-            return_code = res;
-            goto end;
+            /* It's ok that this is not available, so set the corresponding
+               values to -9999 to inform that these are not available. */
+            (*forecasts)[i].past_peak_temperature_min = -9999;
+            (*forecasts)[i].past_peak_temperature_max = -9999;
+            (*forecasts)[i].past_average_temperature_min = -9999;
+            (*forecasts)[i].past_average_temperature_max = -9999;
         }
     }
 
