@@ -1,4 +1,4 @@
-/* meteoroloji.h -- v0.3.0 -- Weather forecast for Türkiye */
+/* meteoroloji.h -- v0.4.0 -- Weather forecast for Türkiye */
 
 /* Copyright (c) 2025 Ahmet Aygör.
 
@@ -155,6 +155,18 @@ struct mtrlj_daily_forecast {
     struct mtrlj_time time;
 };
 
+/* Average forecast for next 3 hours after the given time in field `time` */
+struct mtrlj_hourly_forecast {
+    MTRLJ_WEATHER_CONDITION condition;
+    double temperature;
+    double felt_temperature;
+    double humidity_percent;
+    double wind_speed_avg;
+    double wind_speed_max;
+    double wind_direction;
+    struct mtrlj_time time;
+};
+
 /* Functions for getting information about city and districts, also you need
    these for getting the actual weather information. */
 MTRLJ_CODE mtrlj_get_cities(struct mtrlj_district **cities, size_t *size);
@@ -168,11 +180,15 @@ MTRLJ_CODE mtrlj_latest_situation(struct mtrlj_district district,
                                   struct mtrlj_situation *situation);
 MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
                                     struct mtrlj_daily_forecast **forecasts);
+MTRLJ_CODE mtrlj_hourly_forecasts(struct mtrlj_district district,
+                                  struct mtrlj_hourly_forecast **forecasts,
+                                  size_t *size);
 
 /* Be responsible and free your memory! */
 void mtrlj_free_district(struct mtrlj_district district);
 void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size);
-void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast);
+void mtrlj_free_daily_forecasts(struct mtrlj_daily_forecast *pforecast);
+void mtrlj_free_hourly_forecasts(struct mtrlj_hourly_forecast *pforecast);
 
 #endif
 
@@ -787,6 +803,95 @@ end:
     return return_code;
 }
 
+MTRLJ_CODE mtrlj_hourly_forecasts(struct mtrlj_district district,
+                                  struct mtrlj_hourly_forecast **forecasts,
+                                  size_t *size)
+{
+    const char *HOURLY_FORECAST_ENDPOINT =
+        "https://servis.mgm.gov.tr/web/tahminler/saatlik";
+    char *url_parameter;
+    MTRLJ_CODE return_code = MTRLJ_OK;
+    struct mtrlj_curl_response mcp = {0};
+    cJSON *hourly_json = NULL;
+    cJSON *forecasts_json = NULL;
+    const cJSON *forecast_json = NULL;
+    size_t i;
+
+    url_parameter = calloc(128, sizeof(char));
+    sprintf(url_parameter, "istno=%d", district.hourly_forecast_station);
+
+    if (!mtrlj_curl_get_params(HOURLY_FORECAST_ENDPOINT,
+                               (const char **)&url_parameter, 1, &mcp)) {
+        return_code = MTRLJ_REQUEST_FAILED;
+        goto end;
+    }
+
+    hourly_json = cJSON_Parse(mcp.response);
+    if (hourly_json == NULL || !cJSON_IsArray(hourly_json)
+        || cJSON_GetArraySize(hourly_json) != 1) {
+        return_code = MTRLJ_JSON_PARSING_FAILED;
+        goto end;
+    }
+
+    forecasts_json =
+        cJSON_GetObjectItem(cJSON_GetArrayItem(hourly_json, 0), "tahmin");
+
+    if (forecasts_json == NULL || !cJSON_IsArray(forecasts_json)) {
+        return_code = MTRLJ_JSON_PARSING_FAILED;
+        goto end;
+    }
+
+    *size = cJSON_GetArraySize(forecasts_json);
+    *forecasts = calloc(*size, sizeof(struct mtrlj_hourly_forecast));
+
+    i = 0;
+    cJSON_ArrayForEach(forecast_json, forecasts_json)
+    {
+        cJSON *condition_code = cJSON_GetObjectItem(forecast_json, "hadise");
+        cJSON *temperature = cJSON_GetObjectItem(forecast_json, "sicaklik");
+        cJSON *felt_temperature =
+            cJSON_GetObjectItem(forecast_json, "hissedilenSicaklik");
+        cJSON *humidity_percent = cJSON_GetObjectItem(forecast_json, "nem");
+        cJSON *wind_speed_avg =
+            cJSON_GetObjectItem(forecast_json, "ruzgarHizi");
+        cJSON *wind_speed_max =
+            cJSON_GetObjectItem(forecast_json, "maksimumRuzgarHizi");
+        cJSON *wind_direction =
+            cJSON_GetObjectItem(forecast_json, "ruzgarYonu");
+        cJSON *time = cJSON_GetObjectItem(forecast_json, "tarih");
+
+        if (!cJSON_IsNumber(temperature) || !cJSON_IsNumber(felt_temperature)
+            || !cJSON_IsNumber(humidity_percent)
+            || !cJSON_IsNumber(wind_speed_avg)
+            || !cJSON_IsNumber(wind_speed_max)
+            || !cJSON_IsNumber(wind_direction)
+            || !cJSON_IsString(condition_code)
+            || (condition_code->valuestring == NULL) || !cJSON_IsString(time)
+            || (time->valuestring == NULL)) {
+            return_code = MTRLJ_JSON_PARSING_FAILED;
+            goto end;
+        }
+
+        (*forecasts)[i].condition =
+            mtrlj_condition_from_code(condition_code->valuestring);
+        (*forecasts)[i].temperature = temperature->valuedouble;
+        (*forecasts)[i].felt_temperature = felt_temperature->valuedouble;
+        (*forecasts)[i].humidity_percent = humidity_percent->valuedouble;
+        (*forecasts)[i].wind_speed_avg = wind_speed_avg->valuedouble;
+        (*forecasts)[i].wind_speed_max = wind_speed_max->valuedouble;
+        (*forecasts)[i].wind_direction = wind_direction->valuedouble;
+        (*forecasts)[i].time = mtrlj_parse_iso8601_time(time->valuestring);
+
+        i++;
+    }
+
+end:
+    free(url_parameter);
+    cJSON_Delete(hourly_json);
+    free(mcp.response);
+    return return_code;
+}
+
 void mtrlj_free_district(struct mtrlj_district district)
 {
     free(district.name);
@@ -802,7 +907,12 @@ void mtrlj_free_ndistrict(struct mtrlj_district *pdistrict, size_t size)
     free(pdistrict);
 }
 
-void mtrlj_free_forecasts(struct mtrlj_daily_forecast *pforecast)
+void mtrlj_free_daily_forecasts(struct mtrlj_daily_forecast *pforecast)
+{
+    free(pforecast);
+}
+
+void mtrlj_free_hourly_forecasts(struct mtrlj_hourly_forecast *pforecast)
 {
     free(pforecast);
 }

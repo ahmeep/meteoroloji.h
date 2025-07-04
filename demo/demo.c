@@ -68,7 +68,9 @@ int main(int argc, char **argv)
     char *district_name = "";
     struct mtrlj_district district;
     struct mtrlj_situation situation;
-    struct mtrlj_daily_forecast *forecasts;
+    struct mtrlj_hourly_forecast *hourly_forecasts;
+    size_t hourly_forecast_count;
+    struct mtrlj_daily_forecast *daily_forecasts;
     size_t i;
 
     setlocale(LC_TIME, ""); /* for strftime */
@@ -126,21 +128,36 @@ int main(int argc, char **argv)
     if (value_available(situation.snow_height))
         printf("Snow Height: %d m\n", (int)situation.snow_height);
 
-    if (mtrlj_five_days_forecast(district, &forecasts) != MTRLJ_OK) {
+    if (mtrlj_hourly_forecasts(district, &hourly_forecasts,
+                               &hourly_forecast_count)
+        != MTRLJ_OK) {
+        fprintf(stderr, "Could not get hourly forecasts for %s-%s\n",
+                district.city_name, district.name);
+        return 1;
+    }
+
+    for (i = 0; i < hourly_forecast_count; i++) {
+        print_time(hourly_forecasts[i].time);
+        printf("%.2f\n", hourly_forecasts[i].temperature);
+    }
+
+    if (mtrlj_five_days_forecast(district, &daily_forecasts) != MTRLJ_OK) {
         fprintf(stderr, "Could not get 5 days forecast for %s-%s\n",
                 district.city_name, district.name);
         return 1;
     }
 
     for (i = 0; i < 5; i++) {
-        print_time(forecasts[i].time);
-        printf("%.2f %.2f %.2f %.2f\n", forecasts[i].past_peak_temperature_min,
-               forecasts[i].past_peak_temperature_max,
-               forecasts[i].past_average_temperature_min,
-               forecasts[i].past_average_temperature_max);
+        print_time(daily_forecasts[i].time);
+        printf("%.2f %.2f %.2f %.2f\n",
+               daily_forecasts[i].past_peak_temperature_min,
+               daily_forecasts[i].past_peak_temperature_max,
+               daily_forecasts[i].past_average_temperature_min,
+               daily_forecasts[i].past_average_temperature_max);
     }
 
     mtrlj_free_district(district);
-    mtrlj_free_forecasts(forecasts);
+    mtrlj_free_daily_forecasts(daily_forecasts);
+    mtrlj_free_hourly_forecasts(hourly_forecasts);
     return 0;
 }
