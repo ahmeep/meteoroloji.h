@@ -1,4 +1,4 @@
-/* meteoroloji.h -- v0.2.0 -- Weather forecast for Türkiye */
+/* meteoroloji.h -- v0.3.0 -- Weather forecast for Türkiye */
 
 /* Copyright (c) 2025 Ahmet Aygör.
 
