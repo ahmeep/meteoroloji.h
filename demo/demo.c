@@ -262,9 +262,9 @@ int main(int argc, char **argv)
     char *district_name = "";
     struct mtrlj_district district;
     struct mtrlj_situation situation;
-    struct mtrlj_hourly_forecast *hourly_forecasts;
-    size_t hourly_forecast_count;
-    struct mtrlj_daily_forecast *daily_forecasts;
+    struct mtrlj_hourly_forecast *hourly_forecasts = NULL;
+    size_t hourly_forecast_count = 0;
+    struct mtrlj_daily_forecast *daily_forecasts = NULL;
     size_t i;
 
     setlocale(LC_ALL, "en_US.utf8");
@@ -386,7 +386,6 @@ int main(int argc, char **argv)
         != MTRLJ_OK) {
         fprintf(stderr, "Could not get hourly forecasts for %s-%s\n",
                 district.city_name, district.name);
-        return 1;
     }
 
     for (i = 0; i < hourly_forecast_count; i++) {
@@ -467,10 +466,9 @@ int main(int argc, char **argv)
     if (mtrlj_five_days_forecast(district, &daily_forecasts) != MTRLJ_OK) {
         fprintf(stderr, "Could not get 5 days forecast for %s-%s\n",
                 district.city_name, district.name);
-        return 1;
     }
 
-    for (i = 0; i < 5; i++) {
+    for (i = 0; daily_forecasts != NULL && i < 5; i++) {
         struct mtrlj_daily_forecast forecast = daily_forecasts[i];
         struct mtrlj_time time = forecast.time;
         char *timestr = tmtostr(time, "%x");

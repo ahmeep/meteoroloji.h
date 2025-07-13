@@ -1,4 +1,4 @@
-/* meteoroloji.h -- v0.5.0 -- Weather forecast for Türkiye */
+/* meteoroloji.h -- v0.6.0 -- Weather forecast for Türkiye */
 
 /* Copyright (c) 2025 Ahmet Aygör.
 
@@ -46,7 +46,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 typedef enum {
     MTRLJ_OK = 0,
     MTRLJ_REQUEST_FAILED,
-    MTRLJ_JSON_PARSING_FAILED
+    MTRLJ_JSON_PARSING_FAILED,
+    MTRLJ_NOT_AVAILABLE
 } MTRLJ_CODE;
 
 /* I am not so sure about translations but should be OK. */
@@ -306,8 +307,6 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
     cJSON *city_plate_code = cJSON_GetObjectItem(district_json, "ilPlaka");
 
     if (!cJSON_IsNumber(id) || !cJSON_IsNumber(height)
-        || !cJSON_IsNumber(daily_forecast_station)
-        || !cJSON_IsNumber(hourly_forecast_station)
         || !cJSON_IsNumber(longitude) || !cJSON_IsNumber(latitude)
         || !cJSON_IsNumber(city_plate_code) || !cJSON_IsString(name)
         || !cJSON_IsString(city_name) || (name->valuestring == NULL)
@@ -317,8 +316,10 @@ MTRLJ_CODE mtrlj_json_parse_district(const cJSON *district_json,
 
     district->id = id->valueint;
     district->height = height->valueint;
-    district->daily_forecast_station = daily_forecast_station->valueint;
-    district->hourly_forecast_station = hourly_forecast_station->valueint;
+    if (cJSON_IsNumber(daily_forecast_station))
+        district->daily_forecast_station = daily_forecast_station->valueint;
+    if (cJSON_IsNumber(hourly_forecast_station))
+        district->hourly_forecast_station = hourly_forecast_station->valueint;
     district->longitude = longitude->valuedouble;
     district->latitude = latitude->valuedouble;
 
@@ -707,6 +708,9 @@ MTRLJ_CODE mtrlj_five_days_forecast(struct mtrlj_district district,
     cJSON *daily_json = NULL;
     size_t i;
 
+    if (district.daily_forecast_station == 0)
+        return MTRLJ_NOT_AVAILABLE;
+
     url_parameter = calloc(128, sizeof(char));
     sprintf(url_parameter, "istno=%d", district.daily_forecast_station);
 
@@ -820,6 +824,9 @@ MTRLJ_CODE mtrlj_hourly_forecasts(struct mtrlj_district district,
     cJSON *forecasts_json = NULL;
     const cJSON *forecast_json = NULL;
     size_t i;
+
+    if (district.hourly_forecast_station == 0)
+        return MTRLJ_NOT_AVAILABLE;
 
     url_parameter = calloc(128, sizeof(char));
     sprintf(url_parameter, "istno=%d", district.hourly_forecast_station);
